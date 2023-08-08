@@ -4,6 +4,7 @@ import com.alibaba.fastjson.JSONObject;
 import com.taosdata.jdbc.enums.SchemalessProtocolType;
 import com.taosdata.jdbc.enums.SchemalessTimestampType;
 import com.taosdata.jdbc.utils.TaosInfo;
+import com.taosdata.jdbc.utils.Utils;
 
 import java.io.UnsupportedEncodingException;
 import java.nio.ByteBuffer;
@@ -100,6 +101,7 @@ public class TSDBJNIConnector {
     public long executeQuery(String sql, Long reqId) throws SQLException {
         long pSql = 0L;
         try {
+            sql = Utils.addBacktick(sql);
             if (null == reqId)
                 pSql = this.executeQueryImp(sql.getBytes(TaosGlobalConfig.getCharset()), this.taos);
             else

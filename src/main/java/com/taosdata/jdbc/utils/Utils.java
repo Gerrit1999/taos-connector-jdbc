@@ -26,6 +26,8 @@ public class Utils {
     private static final DateTimeFormatter milliSecFormatter = new DateTimeFormatterBuilder().appendPattern("yyyy-MM-dd HH:mm:ss.SSS").toFormatter();
     private static final DateTimeFormatter microSecFormatter = new DateTimeFormatterBuilder().appendPattern("yyyy-MM-dd HH:mm:ss.SSSSSS").toFormatter();
     private static final DateTimeFormatter nanoSecFormatter = new DateTimeFormatterBuilder().appendPattern("yyyy-MM-dd HH:mm:ss.SSSSSSSSS").toFormatter();
+    private static final Pattern FROM_PATTERN_WITHOUT_BACKTICK = Pattern.compile("FROM\\s+(?:(\\w+)\\.)?(\\w+)", Pattern.CASE_INSENSITIVE);
+
 
     public static Time parseTime(String timestampStr) throws DateTimeParseException {
         LocalDateTime dateTime = parseLocalDateTime(timestampStr);
@@ -185,6 +187,19 @@ public class Utils {
             }
             return sqlArr[index] + paraStr;
         }).collect(Collectors.joining());
+    }
+
+    public static String addBacktick(String rawSql) {
+        Matcher matcher = FROM_PATTERN_WITHOUT_BACKTICK.matcher(rawSql);
+        if (matcher.find() && matcher.groupCount() == 2) {
+            StringBuilder sb = new StringBuilder();
+            String dbname = matcher.group(1);
+            String tableFullName = "`" + matcher.group(2) + "`";
+            matcher.appendReplacement(sb, "FROM " + (dbname != null ? dbname + "." : "") + tableFullName);
+            matcher.appendTail(sb);
+            return sb.toString();
+        }
+        return rawSql;
     }
 
     public static ClassLoader getClassLoader() {

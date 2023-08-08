@@ -205,4 +205,16 @@ public class UtilsTest {
         Assert.assertEquals(nativeSql, actual);
 
     }
+
+    @Test
+    public void addBacktick1() {
+        String sql = Utils.addBacktick("select id as t_ABC from t_ABC");
+        Assert.assertEquals("select id as t_ABC FROM `t_ABC`", sql);
+    }
+
+    @Test
+    public void addBacktick2() {
+        String sql = Utils.addBacktick("select id as t_ABC from dbname.t_ABC");
+        Assert.assertEquals("select id as t_ABC FROM dbname.`t_ABC`", sql);
+    }
 }
