@@ -207,14 +207,44 @@ public class UtilsTest {
     }
 
     @Test
-    public void addBacktick1() {
-        String sql = Utils.addBacktick("select id as t_ABC from t_ABC");
-        Assert.assertEquals("select id as t_ABC FROM `t_ABC`", sql);
+    public void addBacktick01() {
+        String sql = Utils.addBacktick("select id from public.sys_user as u");
+        Assert.assertEquals("SELECT id FROM `public`.`sys_user` AS u", sql);
     }
 
     @Test
-    public void addBacktick2() {
-        String sql = Utils.addBacktick("select id as t_ABC from dbname.t_ABC");
-        Assert.assertEquals("select id as t_ABC FROM dbname.`t_ABC`", sql);
+    public void addBacktick02() {
+        String sql = Utils.addBacktick("INSERT INTO public.sys_user (username, password) VALUES ('john', '123456')");
+        Assert.assertEquals("INSERT INTO `public`.`sys_user` (username, password) VALUES ('john', '123456')", sql);
+    }
+
+    @Test
+    public void addBacktick03() {
+        String sql = Utils.addBacktick("UPDATE public.sys_user SET name = 'tom' WHERE id = 2");
+        Assert.assertEquals("UPDATE `public`.`sys_user` SET name = 'tom' WHERE id = 2", sql);
+    }
+
+    @Test
+    public void addBacktick04() {
+        String sql = Utils.addBacktick("CREATE TABLE IF NOT EXISTS db_name.tb_name (create_definition)");
+        Assert.assertEquals("CREATE TABLE IF NOT EXISTS `db_name`.`tb_name` (create_definition)", sql);
+    }
+
+    @Test
+    public void addBacktick05() {
+        String sql = Utils.addBacktick("CREATE INDEX index_name ON db_name.tb_name (tagColName)");
+        Assert.assertEquals("CREATE INDEX index_name ON `db_name`.`tb_name` (tagColName)", sql);
+    }
+
+    @Test
+    public void addBacktick06() {
+        String sql = Utils.addBacktick("describe db_name.tb_name");
+        Assert.assertEquals("DESCRIBE `db_name`.`tb_name`", sql);
+    }
+
+    @Test
+    public void addBacktick07() {
+        String sql = Utils.addBacktick("describe `db_name`.`tb_name`");
+        Assert.assertEquals("DESCRIBE `db_name`.`tb_name`", sql);
     }
 }

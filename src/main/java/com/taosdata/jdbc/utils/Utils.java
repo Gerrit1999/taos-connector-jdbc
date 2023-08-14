@@ -3,6 +3,20 @@ package com.taosdata.jdbc.utils;
 import com.google.common.collect.Range;
 import com.google.common.collect.RangeSet;
 import com.google.common.collect.TreeRangeSet;
+import net.sf.jsqlparser.JSQLParserException;
+import net.sf.jsqlparser.parser.CCJSqlParserUtil;
+import net.sf.jsqlparser.schema.Table;
+import net.sf.jsqlparser.statement.DescribeStatement;
+import net.sf.jsqlparser.statement.Statement;
+import net.sf.jsqlparser.statement.create.index.CreateIndex;
+import net.sf.jsqlparser.statement.create.table.CreateTable;
+import net.sf.jsqlparser.statement.delete.Delete;
+import net.sf.jsqlparser.statement.insert.Insert;
+import net.sf.jsqlparser.statement.select.FromItem;
+import net.sf.jsqlparser.statement.select.PlainSelect;
+import net.sf.jsqlparser.statement.select.Select;
+import net.sf.jsqlparser.statement.update.Update;
+import net.sf.jsqlparser.util.deparser.StatementDeParser;
 
 import java.lang.reflect.Constructor;
 import java.nio.charset.StandardCharsets;
@@ -190,14 +204,13 @@ public class Utils {
     }
 
     public static String addBacktick(String rawSql) {
-        Matcher matcher = FROM_PATTERN_WITHOUT_BACKTICK.matcher(rawSql);
-        if (matcher.find() && matcher.groupCount() == 2) {
-            StringBuilder sb = new StringBuilder();
-            String dbname = matcher.group(1);
-            String tableFullName = "`" + matcher.group(2) + "`";
-            matcher.appendReplacement(sb, "FROM " + (dbname != null ? dbname + "." : "") + tableFullName);
-            matcher.appendTail(sb);
-            return sb.toString();
+        try {
+            Statement statement = CCJSqlParserUtil.parse(rawSql);
+            // 创建一个StatementDeParser对象，用于解析和重建SQL语句
+            StatementDeParser deParser = new TableNameModifierVisitor(new StringBuilder());
+            statement.accept(deParser);
+            return deParser.getBuffer().toString();
+        } catch (JSQLParserException ignored) {
         }
         return rawSql;
     }
@@ -233,6 +246,73 @@ public class Utils {
             throw new RuntimeException("Could not find a public no-argument constructor for " + c.getName(), e);
         } catch (ReflectiveOperationException | RuntimeException e) {
             throw new RuntimeException("Could not instantiate class " + c.getName(), e);
+        }
+    }
+
+    private static class TableNameModifierVisitor extends StatementDeParser {
+
+        public TableNameModifierVisitor(StringBuilder buffer) {
+            super(buffer);
+        }
+
+        private void modify(Table table) {
+            String schemaName = table.getSchemaName();
+            String tableName = table.getName();
+            if (isUnquoted(schemaName)) {
+                table.setSchemaName("`" + schemaName + "`");
+            }
+            if (isUnquoted(tableName)) {
+                table.setName("`" + tableName + "`");
+            }
+        }
+
+        private boolean isUnquoted(String s) {
+            return !StringUtils.isEmpty(s) && !s.startsWith("`") && !s.endsWith("`");
+        }
+
+        @Override
+        public void visit(DescribeStatement describe) {
+            modify(describe.getTable());
+            super.visit(describe);
+        }
+
+        @Override
+        public void visit(CreateTable createTable) {
+            modify(createTable.getTable());
+            super.visit(createTable);
+        }
+
+        public void visit(CreateIndex createIndex) {
+            modify(createIndex.getTable());
+            super.visit(createIndex);
+        }
+
+        @Override
+        public void visit(Delete delete) {
+            modify(delete.getTable());
+            super.visit(delete);
+        }
+
+        @Override
+        public void visit(Select select) {
+            PlainSelect plainSelect = select.getSelectBody(PlainSelect.class);
+            FromItem fromItem = plainSelect.getFromItem();
+            if (fromItem instanceof Table) {
+                modify((Table) fromItem);
+            }
+            super.visit(select);
+        }
+
+        @Override
+        public void visit(Insert insert) {
+            modify(insert.getTable());
+            super.visit(insert);
+        }
+
+        @Override
+        public void visit(Update update) {
+            modify(update.getTable());
+            super.visit(update);
         }
     }
 }

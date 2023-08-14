@@ -10,6 +10,7 @@ import com.taosdata.jdbc.TSDBError;
 import com.taosdata.jdbc.TSDBErrorNumbers;
 import com.taosdata.jdbc.utils.HttpClientPoolUtil;
 import com.taosdata.jdbc.utils.SqlSyntaxValidator;
+import com.taosdata.jdbc.utils.Utils;
 
 import java.sql.Connection;
 import java.sql.ResultSet;
@@ -83,6 +84,7 @@ public class RestfulStatement extends AbstractStatement {
         if (isClosed())
             throw TSDBError.createSQLException(TSDBErrorNumbers.ERROR_STATEMENT_CLOSED);
 
+        sql = Utils.addBacktick(sql);
         // 如果执行了use操作应该将当前Statement的catalog设置为新的database
         boolean result = true;
 

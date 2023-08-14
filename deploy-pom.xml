@@ -70,6 +70,11 @@
       <artifactId>Java-WebSocket</artifactId>
       <version>1.5.2</version>
     </dependency>
+    <dependency>
+      <groupId>com.github.jsqlparser</groupId>
+      <artifactId>jsqlparser</artifactId>
+      <version>4.6</version>
+    </dependency>
   </dependencies>
 
   <build>
@@ -100,8 +105,8 @@
         <version>3.6.1</version>
         <configuration>
           <encoding>UTF-8</encoding>
-          <source>9</source>
-          <target>9</target>
+          <source>8</source>
+          <target>8</target>
           <debug>true</debug>
           <showDeprecation>true</showDeprecation>
         </configuration>
