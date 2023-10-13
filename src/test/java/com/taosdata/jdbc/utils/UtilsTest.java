@@ -247,4 +247,10 @@ public class UtilsTest {
         String sql = Utils.addBacktick("describe `db_name`.`tb_name`");
         Assert.assertEquals("DESCRIBE `db_name`.`tb_name`", sql);
     }
+
+    @Test
+    public void addBacktick08() {
+        String sql = Utils.addBacktick("SELECT t.* FROM public.DB_NAME t");
+        Assert.assertEquals("SELECT t.* FROM `public`.`DB_NAME` t", sql);
+    }
 }

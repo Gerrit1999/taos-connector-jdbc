@@ -6,6 +6,7 @@ import com.taosdata.jdbc.TSDBError;
 import com.taosdata.jdbc.TSDBErrorNumbers;
 import com.taosdata.jdbc.utils.ReqId;
 import com.taosdata.jdbc.utils.SqlSyntaxValidator;
+import com.taosdata.jdbc.utils.Utils;
 import com.taosdata.jdbc.ws.entity.*;
 
 import java.sql.Connection;
@@ -75,6 +76,7 @@ public class WSStatement extends AbstractStatement {
         if (isClosed())
             throw TSDBError.createSQLException(TSDBErrorNumbers.ERROR_STATEMENT_CLOSED);
 
+        sql = Utils.addBacktick(sql);
         if (null == reqId)
             reqId = ReqId.getReqID();
         Request request = RequestFactory.generateQuery(sql, reqId);

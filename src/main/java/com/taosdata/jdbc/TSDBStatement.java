@@ -14,6 +14,8 @@
  *****************************************************************************/
 package com.taosdata.jdbc;
 
+import com.taosdata.jdbc.utils.Utils;
+
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -185,6 +187,7 @@ public class TSDBStatement extends AbstractStatement {
             if (isClosed()) {
                 throw TSDBError.createSQLException(TSDBErrorNumbers.ERROR_STATEMENT_CLOSED);
             }
+            sql = Utils.addBacktick(sql);
             if (this.resultSet != null && !this.resultSet.isClosed())
                 this.resultSet.close();
 
