@@ -37,7 +37,9 @@ import static com.taosdata.jdbc.utils.SqlSyntaxValidator.getDatabaseName;
 import static com.taosdata.jdbc.utils.SqlSyntaxValidator.isUseSql;
 
 public class TSWSPreparedStatement extends WSStatement implements PreparedStatement {
-    private static final Pattern INSERT_PATTERN = Pattern.compile("insert\\s+into\\s+(\\w+|\\?)\\s+(using\\s+(\\w+)\\s+tags\\s*\\(.*\\))?\\s*values\\s*\\(.*\\)");
+   public static final Pattern INSERT_PATTERN = Pattern.compile(
+             "insert\\s+into\\s+([.\\w]+|\\?)\\s+(using\\s+([.\\w]+)(\\s*\\(.*\\)\\s*|\\s+)tags\\s*\\(.*\\))?\\s*(\\(.*\\))?\\s*values\\s*\\(.*\\)"
+   );
     private final ConnectionParam param;
     private Transport prepareTransport;
     private long reqId;
@@ -95,13 +97,13 @@ public class TSWSPreparedStatement extends WSStatement implements PreparedStatem
         Request request = RequestFactory.generateInit(reqId);
         StmtResp resp = (StmtResp) prepareTransport.send(request);
         if (Code.SUCCESS.getCode() != resp.getCode()) {
-            throw new SQLException("0x" + Integer.toHexString(resp.getCode()) + ":" + resp.getMessage());
+            throw new SQLException("(0x" + Integer.toHexString(resp.getCode()) + "):" + resp.getMessage());
         }
         stmtId = resp.getStmtId();
         Request prepare = RequestFactory.generatePrepare(stmtId, reqId, sql);
         StmtResp prepareResp = (StmtResp) prepareTransport.send(prepare);
         if (Code.SUCCESS.getCode() != prepareResp.getCode()) {
-            throw new SQLException("0x" + Integer.toHexString(prepareResp.getCode()) + ":" + prepareResp.getMessage());
+            throw new SQLException("(0x" + Integer.toHexString(prepareResp.getCode()) + "):" + prepareResp.getMessage());
         }
     }
 
@@ -143,13 +145,13 @@ public class TSWSPreparedStatement extends WSStatement implements PreparedStatem
                 Request request = RequestFactory.generateInit(reqId);
                 StmtResp resp = (StmtResp) prepareTransport.send(request);
                 if (Code.SUCCESS.getCode() != resp.getCode()) {
-                    throw new SQLException("0x" + Integer.toHexString(resp.getCode()) + ":" + resp.getMessage());
+                    throw new SQLException("(0x" + Integer.toHexString(resp.getCode()) + "):" + resp.getMessage());
                 }
                 stmtId = resp.getStmtId();
                 Request prepare = RequestFactory.generatePrepare(stmtId, reqId, rawSql);
                 StmtResp prepareResp = (StmtResp) prepareTransport.send(prepare);
                 if (Code.SUCCESS.getCode() != prepareResp.getCode()) {
-                    throw new SQLException("0x" + Integer.toHexString(prepareResp.getCode()) + ":" + prepareResp.getMessage());
+                    throw new SQLException("(0x" + Integer.toHexString(prepareResp.getCode()) + "):" + prepareResp.getMessage());
                 }
             }
         }
@@ -205,7 +207,7 @@ public class TSWSPreparedStatement extends WSStatement implements PreparedStatem
             StmtResp bindResp = (StmtResp) prepareTransport.send(STMTAction.SET_TAGS.getAction(),
                     reqId, stmtId, BindType.TAG.get(), tagBlock);
             if (Code.SUCCESS.getCode() != bindResp.getCode()) {
-                throw new SQLException("0x" + Integer.toHexString(bindResp.getCode()) + ":" + bindResp.getMessage());
+                throw new SQLException("(0x" + Integer.toHexString(bindResp.getCode()) + "):" + bindResp.getMessage());
             }
         }
         // bind
@@ -222,21 +224,21 @@ public class TSWSPreparedStatement extends WSStatement implements PreparedStatem
         StmtResp bindResp = (StmtResp) prepareTransport.send(STMTAction.BIND.getAction(),
                 reqId, stmtId, BindType.BIND.get(), rawBlock);
         if (Code.SUCCESS.getCode() != bindResp.getCode()) {
-            throw new SQLException("0x" + Integer.toHexString(bindResp.getCode()) + ":" + bindResp.getMessage());
+            throw new SQLException("(0x" + Integer.toHexString(bindResp.getCode()) + "):" + bindResp.getMessage());
         }
         // add batch
         Request batch = RequestFactory.generateBatch(stmtId, reqId);
         Response send = prepareTransport.send(batch);
         StmtResp batchResp = (StmtResp) send;
         if (Code.SUCCESS.getCode() != batchResp.getCode()) {
-            throw new SQLException("0x" + Integer.toHexString(batchResp.getCode()) + ":" + batchResp.getMessage());
+            throw new SQLException("(0x" + Integer.toHexString(batchResp.getCode()) + "):" + batchResp.getMessage());
         }
         this.clearParameters();
         // send
         Request request = RequestFactory.generateExec(stmtId, reqId);
         ExecResp resp = (ExecResp) prepareTransport.send(request);
         if (Code.SUCCESS.getCode() != resp.getCode()) {
-            throw new SQLException("0x" + Integer.toHexString(resp.getCode()) + ":" + resp.getMessage());
+            throw new SQLException("(0x" + Integer.toHexString(resp.getCode()) + "):" + resp.getMessage());
         }
         // close
         Request close = RequestFactory.generateClose(stmtId, reqId);
@@ -249,7 +251,7 @@ public class TSWSPreparedStatement extends WSStatement implements PreparedStatem
         Request request = RequestFactory.generateSetTableName(stmtId, reqId, name);
         StmtResp resp = (StmtResp) prepareTransport.send(request);
         if (Code.SUCCESS.getCode() != resp.getCode()) {
-            throw new SQLException("0x" + Integer.toHexString(resp.getCode()) + ":" + resp.getMessage());
+            throw new SQLException("(0x" + Integer.toHexString(resp.getCode()) + "):" + resp.getMessage());
         }
     }
 
@@ -282,6 +284,9 @@ public class TSWSPreparedStatement extends WSStatement implements PreparedStatem
             case Types.BINARY:
             case Types.VARCHAR:
                 tag.put(index, new Column(null, TSDB_DATA_TYPE_BINARY, index));
+                break;
+            case Types.VARBINARY:
+                tag.put(index, new Column(null, TSDB_DATA_TYPE_VARBINARY, index));
                 break;
             case Types.NCHAR:
                 tag.put(index, new Column(null, TSDB_DATA_TYPE_NCHAR, index));
@@ -323,6 +328,9 @@ public class TSWSPreparedStatement extends WSStatement implements PreparedStatem
                 break;
             case TSDB_DATA_TYPE_BINARY:
                 tag.put(index, new Column(null, TSDB_DATA_TYPE_BINARY, index));
+                break;
+            case TSDB_DATA_TYPE_VARBINARY:
+                tag.put(index, new Column(null, TSDB_DATA_TYPE_VARBINARY, index));
                 break;
             case TSDB_DATA_TYPE_NCHAR:
                 tag.put(index, new Column(null, TSDB_DATA_TYPE_NCHAR, index));
@@ -377,6 +385,11 @@ public class TSWSPreparedStatement extends WSStatement implements PreparedStatem
         tag.put(index, new Column(bytes, TSDB_DATA_TYPE_BINARY, index));
     }
 
+    public void setTagVarbinary(int index, String value) {
+        byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
+        tag.put(index, new Column(bytes, TSDB_DATA_TYPE_VARBINARY, index));
+    }
+
     public void setTagNString(int index, String value) {
         tag.put(index, new Column(value, TSDB_DATA_TYPE_NCHAR, index));
     }
@@ -416,6 +429,9 @@ public class TSWSPreparedStatement extends WSStatement implements PreparedStatem
             case Types.BINARY:
             case Types.VARCHAR:
                 column.put(parameterIndex, new Column(null, TSDB_DATA_TYPE_BINARY, parameterIndex));
+                break;
+            case Types.VARBINARY:
+                column.put(parameterIndex, new Column(null, TSDB_DATA_TYPE_VARBINARY, parameterIndex));
                 break;
             case Types.NCHAR:
                 column.put(parameterIndex, new Column(null, TSDB_DATA_TYPE_NCHAR, parameterIndex));
@@ -483,6 +499,16 @@ public class TSWSPreparedStatement extends WSStatement implements PreparedStatem
     @Override
     public void setBytes(int parameterIndex, byte[] x) throws SQLException {
         column.put(parameterIndex, new Column(x, TSDB_DATA_TYPE_BINARY, parameterIndex));
+    }
+
+    public void setVarbinary(int parameterIndex, String x) throws SQLException {
+        // UTF-8
+        if (x == null) {
+            setNull(parameterIndex, Types.VARBINARY);
+            return;
+        }
+        byte[] bytes = x.getBytes(StandardCharsets.UTF_8);
+        column.put(parameterIndex, new Column(bytes, TSDB_DATA_TYPE_VARBINARY, parameterIndex));
     }
 
     @Override
@@ -568,6 +594,9 @@ public class TSWSPreparedStatement extends WSStatement implements PreparedStatem
             case Types.BINARY:
             case Types.VARCHAR:
                 column.put(parameterIndex, new Column(x, TSDB_DATA_TYPE_BINARY, parameterIndex));
+                break;
+            case Types.VARBINARY:
+                column.put(parameterIndex, new Column(x, TSDB_DATA_TYPE_VARBINARY, parameterIndex));
                 break;
             case Types.NCHAR:
                 column.put(parameterIndex, new Column(x, TSDB_DATA_TYPE_NCHAR, parameterIndex));
@@ -660,7 +689,7 @@ public class TSWSPreparedStatement extends WSStatement implements PreparedStatem
             StmtResp bindResp = (StmtResp) prepareTransport.send(STMTAction.SET_TAGS.getAction(),
                     reqId, stmtId, BindType.TAG.get(), tagBlock);
             if (Code.SUCCESS.getCode() != bindResp.getCode()) {
-                throw new SQLException("0x" + Integer.toHexString(bindResp.getCode()) + ":" + bindResp.getMessage());
+                throw new SQLException("(0x" + Integer.toHexString(bindResp.getCode()) + "):" + bindResp.getMessage());
             }
         }
         // bind
@@ -673,14 +702,14 @@ public class TSWSPreparedStatement extends WSStatement implements PreparedStatem
         StmtResp bindResp = (StmtResp) prepareTransport.send(STMTAction.BIND.getAction(),
                 reqId, stmtId, BindType.BIND.get(), rawBlock);
         if (Code.SUCCESS.getCode() != bindResp.getCode()) {
-            throw new SQLException("0x" + Integer.toHexString(bindResp.getCode()) + ":" + bindResp.getMessage());
+            throw new SQLException("(0x" + Integer.toHexString(bindResp.getCode()) + "):" + bindResp.getMessage());
         }
         // add batch
         Request batch = RequestFactory.generateBatch(stmtId, reqId);
         Response send = prepareTransport.send(batch);
         StmtResp batchResp = (StmtResp) send;
         if (Code.SUCCESS.getCode() != batchResp.getCode()) {
-            throw new SQLException("0x" + Integer.toHexString(batchResp.getCode()) + ":" + batchResp.getMessage());
+            throw new SQLException("(0x" + Integer.toHexString(batchResp.getCode()) + "):" + batchResp.getMessage());
         }
 
         this.clearParameters();
@@ -688,7 +717,7 @@ public class TSWSPreparedStatement extends WSStatement implements PreparedStatem
         Request request = RequestFactory.generateExec(stmtId, reqId);
         ExecResp resp = (ExecResp) prepareTransport.send(request);
         if (Code.SUCCESS.getCode() != resp.getCode()) {
-            throw new SQLException("0x" + Integer.toHexString(resp.getCode()) + ":" + resp.getMessage());
+            throw new SQLException("(0x" + Integer.toHexString(resp.getCode()) + "):" + resp.getMessage());
         }
         int[] ints = new int[resp.getAffected()];
         for (int i = 0, len = ints.length; i < len; i++)
@@ -995,6 +1024,16 @@ public class TSWSPreparedStatement extends WSStatement implements PreparedStatem
         setValueImpl(columnIndex, collect, TSDBConstants.TSDB_DATA_TYPE_BINARY, size);
     }
 
+    public void setVarbinary(int columnIndex, List<String> list, int size) throws SQLException {
+        List<byte[]> collect = list.stream().map(x -> {
+            if (x == null) {
+                return null;
+            }
+            return x.getBytes(StandardCharsets.UTF_8);
+        }).collect(Collectors.toList());
+        setValueImpl(columnIndex, collect, TSDB_DATA_TYPE_VARBINARY, size);
+    }
+
     // note: expand the required space for each NChar character
     public void setNString(int columnIndex, List<String> list, int size) throws SQLException {
         setValueImpl(columnIndex, list, TSDBConstants.TSDB_DATA_TYPE_NCHAR, size * Integer.BYTES);
@@ -1030,7 +1069,7 @@ public class TSWSPreparedStatement extends WSStatement implements PreparedStatem
             StmtResp bindResp = (StmtResp) prepareTransport.send(STMTAction.SET_TAGS.getAction(),
                     reqId, stmtId, BindType.TAG.get(), tagBlock);
             if (Code.SUCCESS.getCode() != bindResp.getCode()) {
-                throw new SQLException("0x" + Integer.toHexString(bindResp.getCode()) + ":" + bindResp.getMessage());
+                throw new SQLException("(0x" + Integer.toHexString(bindResp.getCode()) + "):" + bindResp.getMessage());
             }
         }
         // bind
@@ -1043,14 +1082,14 @@ public class TSWSPreparedStatement extends WSStatement implements PreparedStatem
         StmtResp bindResp = (StmtResp) prepareTransport.send(STMTAction.BIND.getAction(),
                 reqId, stmtId, BindType.BIND.get(), rawBlock);
         if (Code.SUCCESS.getCode() != bindResp.getCode()) {
-            throw new SQLException("0x" + Integer.toHexString(bindResp.getCode()) + ":" + bindResp.getMessage());
+            throw new SQLException("(0x" + Integer.toHexString(bindResp.getCode()) + "):" + bindResp.getMessage());
         }
         // add batch
         Request batch = RequestFactory.generateBatch(stmtId, reqId);
         Response send = prepareTransport.send(batch);
         StmtResp batchResp = (StmtResp) send;
         if (Code.SUCCESS.getCode() != batchResp.getCode()) {
-            throw new SQLException("0x" + Integer.toHexString(batchResp.getCode()) + ":" + batchResp.getMessage());
+            throw new SQLException("(0x" + Integer.toHexString(batchResp.getCode()) + "):" + batchResp.getMessage());
         }
 
         this.clearParameters();
@@ -1058,7 +1097,7 @@ public class TSWSPreparedStatement extends WSStatement implements PreparedStatem
         Request request = RequestFactory.generateExec(stmtId, reqId);
         ExecResp resp = (ExecResp) prepareTransport.send(request);
         if (Code.SUCCESS.getCode() != resp.getCode()) {
-            throw new SQLException("0x" + Integer.toHexString(resp.getCode()) + ":" + resp.getMessage());
+            throw new SQLException("(0x" + Integer.toHexString(resp.getCode()) + "):" + resp.getMessage());
         }
     }
 

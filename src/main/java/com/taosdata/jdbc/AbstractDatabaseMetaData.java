@@ -7,10 +7,9 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.URL;
 import java.sql.*;
-import java.util.ArrayList;
-import java.util.Enumeration;
-import java.util.List;
-import java.util.Properties;
+import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public abstract class AbstractDatabaseMetaData extends WrapperImpl implements DatabaseMetaData {
 
@@ -45,8 +44,6 @@ public abstract class AbstractDatabaseMetaData extends WrapperImpl implements Da
         }
         return null;
     }
-
-    private String precision = TSDBConstants.DEFAULT_PRECISION;
 
     public boolean allProceduresAreCallable() throws SQLException {
         return false;
@@ -634,7 +631,7 @@ public abstract class AbstractDatabaseMetaData extends WrapperImpl implements Da
                 try (ResultSet tables = stmt.executeQuery(sql.toString())) {
                     while (tables.next()) {
                         TSDBResultSetRowData rowData = new TSDBResultSetRowData(10);
-                        rowData.setStringValue(1, catalog);                                     //TABLE_CAT
+                        rowData.setStringValue(1, db);                                     //TABLE_CAT
                         rowData.setStringValue(2, null);                                 //TABLE_SCHEM
                         rowData.setStringValue(3, tables.getString("table_name"));  //TABLE_NAME
                         rowData.setStringValue(4, "TABLE");                              //TABLE_TYPE
@@ -645,7 +642,7 @@ public abstract class AbstractDatabaseMetaData extends WrapperImpl implements Da
                 try (ResultSet stables = stmt.executeQuery(Ssql.toString())) {
                     while (stables.next()) {
                         TSDBResultSetRowData rowData = new TSDBResultSetRowData(10);
-                        rowData.setStringValue(1, catalog);                                  //TABLE_CAT
+                        rowData.setStringValue(1, db);                                  //TABLE_CAT
                         rowData.setStringValue(2, null);                              //TABLE_SCHEM
                         rowData.setStringValue(3, stables.getString("stable_name"));    //TABLE_NAME
                         rowData.setStringValue(4, "TABLE");                           //TABLE_TYPE
@@ -699,65 +696,397 @@ public abstract class AbstractDatabaseMetaData extends WrapperImpl implements Da
 
     public abstract ResultSet getColumns(String catalog, String schemaPattern, String tableNamePattern, String columnNamePattern) throws SQLException;
 
-    protected ResultSet getColumns(String catalog, String schemaPattern, String tableNamePattern, String columnNamePattern, Connection conn) throws SQLException {
-        if (catalog == null || catalog.isEmpty())
-            return null;
-        if (!isAvailableCatalog(conn, catalog))
-            return new EmptyResultSet();
+    private Map<String, String> getCatalogMate(Connection connection, String catalog) throws SQLException {
+        Map<String, String> result = new HashMap<>();
+        try (Statement stmt = connection.createStatement();
+             ResultSet databases = stmt.executeQuery("select name, `precision` as `precision` from information_schema.ins_databases")) {
+            while (databases.next()) {
+                String dbname = databases.getString("name");
+                String precision = databases.getString("precision");
+                if (catalog == null) {
+                    result.put(dbname, precision);
+                } else {
+                    if (dbname.equalsIgnoreCase(catalog))
+                        result.put(dbname, precision);
+                }
+            }
+        }
+        return result;
+    }
 
+    // database - stables
+    private Map<String, Set<String>> getSTableMate(Connection connection, String sTable, String db) throws SQLException {
+        Map<String, Set<String>> result = new HashMap<>();
+        String sql = "select stable_name, db_name from information_schema.ins_stables where 1 = 1 ";
+        if (sTable != null)
+            sql += " and stable_name='" + sTable + "'";
+        if (db != null)
+            sql += " and db_name= '" + db + "'";
+        try (Statement stmt = connection.createStatement();
+             ResultSet databases = stmt.executeQuery(sql)) {
+            while (databases.next()) {
+                String name = databases.getString("stable_name");
+                String dbName = databases.getString("db_name");
+                Set<String> stables;
+                if (result.containsKey(dbName)) {
+                    stables = result.get(dbName);
+                } else {
+                    stables = new HashSet<>();
+                    result.put(dbName, stables);
+                }
+                stables.add(name);
+            }
+        }
+        return result;
+    }
+
+    private Map<String, Set<String>> getTableMate(Connection connection, String table, String db) throws SQLException {
+        Map<String, Set<String>> result = new HashMap<>();
+        String sql = "select table_name, db_name, stable_name from information_schema.ins_tables where 1 = 1 ";
+        if (table != null)
+            sql += " and table_name='" + table + "'";
+        if (db != null)
+            sql += " and db_name='" + db + "'";
+        try (Statement stmt = connection.createStatement();
+             ResultSet tables = stmt.executeQuery(sql)) {
+            while (tables.next()) {
+                String name = tables.getString("table_name");
+                String dbName = tables.getString("db_name");
+                if (result.containsKey(dbName)) {
+                    Set<String> set = result.get(dbName);
+                    set.add(name);
+                } else {
+                    Set<String> set = new HashSet<>();
+                    set.add(name);
+                    result.put(dbName, set);
+                }
+            }
+        }
+        return result;
+    }
+
+    // super table
+    private void show2RowData(ResultSet rs, List<TSDBResultSetRowData> rowDataList, String precision, String db, String tableName, String colName) throws SQLException {
+        int rowIndex = 0;
+        while (rs.next()) {
+//            table_name, db_name, table_type, col_name as field, col_type as type, col_length as length
+            TSDBResultSetRowData rowData = new TSDBResultSetRowData(24);
+            // set TABLE_CAT
+            rowData.setStringValue(1, db);
+            // set TABLE_SCHEM
+            rowData.setStringValue(2, null);
+            // set TABLE_NAME
+            rowData.setStringValue(3, tableName);
+            // set COLUMN_NAME
+            String field = rs.getString("field");
+            if (colName == null || colName.equals("%") || colName.equals(field)) {
+                rowData.setStringValue(4, field);
+            } else {
+                continue;
+            }
+            // set DATA_TYPE
+            String typeName = rs.getString("type");
+            rowData.setIntValue(5, DataType.getDataType(typeName).getJdbcTypeValue());
+            // set TYPE_NAME
+            rowData.setStringValue(6, typeName);
+            // set COLUMN_SIZE
+            int length = rs.getInt("length");
+            int size = DataType.calculateColumnSize(typeName, precision, length);
+            if (size != -1) {
+                rowData.setIntValue(7, size);
+            } else {
+                rowData.setString(7, null);
+            }
+            // set BUFFER LENGTH
+            rowData.setStringValue(8, null);
+            // set DECIMAL_DIGITS
+            Integer decimalDigits = DataType.calculateDecimalDigits(typeName);
+            if (decimalDigits != null) {
+                rowData.setIntValue(9, decimalDigits);
+            } else {
+                rowData.setStringValue(9, null);
+            }
+            // set NUM_PREC_RADIX
+            rowData.setIntValue(10, 10);
+            // set NULLABLE
+            rowData.setIntValue(11, isNullable(rowIndex, typeName));
+            // set REMARKS
+            String note = rs.getString("note");
+            rowData.setStringValue(12, note.trim().isEmpty() ? null : note);
+            rowDataList.add(rowData);
+            rowIndex++;
+        }
+    }
+
+    Pattern pattern = Pattern.compile("\\((\\d+)\\)");
+    // normal table or child table
+    private void colResultSet2RowData(ResultSet rs, List<TSDBResultSetRowData> rowDataList, Map<String, String> precision) throws SQLException {
+        int rowIndex = 0;
+        while (rs.next()) {
+//            table_name, db_name, table_type, col_name as field, col_type as type, col_length as length
+            TSDBResultSetRowData rowData = new TSDBResultSetRowData(24);
+            // set TABLE_CAT
+            String db = rs.getString("db_name");
+            rowData.setStringValue(1, db);
+            // set TABLE_SCHEM
+            rowData.setStringValue(2, null);
+            // set TABLE_NAME
+            String tableName = rs.getString("table_name");
+            rowData.setStringValue(3, tableName);
+            // set COLUMN_NAME
+            rowData.setStringValue(4, rs.getString("col_name"));
+            // set DATA_TYPE
+            String typeName = rs.getString("col_type");
+            int length = 0;
+            if (typeName.startsWith("VARCHAR")) {
+                rowData.setIntValue(5, DataType.getDataType("VARCHAR").getJdbcTypeValue());
+                length = rs.getInt("col_length") - 2;
+                typeName = "VARCHAR";
+            } else if (typeName.startsWith("NCHAR")) {
+                rowData.setIntValue(5, DataType.getDataType("NCHAR").getJdbcTypeValue());
+                Matcher matcher = pattern.matcher(typeName);
+                if (matcher.find()) {
+                    length = Integer.parseInt(matcher.group(1));
+                }
+                typeName = "NCHAR";
+            } else {
+                rowData.setIntValue(5, DataType.getDataType(typeName).getJdbcTypeValue());
+                length = rs.getInt("col_length");
+            }
+            // set TYPE_NAME
+            rowData.setStringValue(6, typeName);
+            // set COLUMN_SIZE
+            String p = precision.get(db);
+            int size = DataType.calculateColumnSize(typeName, p, length);
+            if (size != -1) {
+                rowData.setIntValue(7, size);
+            } else {
+                rowData.setString(7, null);
+            }
+            // set BUFFER LENGTH
+            rowData.setStringValue(8, null);
+            // set DECIMAL_DIGITS
+            Integer decimalDigits = DataType.calculateDecimalDigits(typeName);
+            if (decimalDigits != null) {
+                rowData.setIntValue(9, decimalDigits);
+            } else {
+                rowData.setStringValue(9, null);
+            }
+            // set NUM_PREC_RADIX
+            rowData.setIntValue(10, 10);
+            // set NULLABLE
+            rowData.setIntValue(11, isNullable(rowIndex, typeName));
+            // set REMARKS
+            rowData.setStringValue(12, null);
+            rowDataList.add(rowData);
+            rowIndex++;
+        }
+    }
+
+    // child table
+    private void tagResultSet2RowData(ResultSet rs, List<TSDBResultSetRowData> rowDataList, Map<String, String> precision) throws SQLException {
+        int rowIndex = 0;
+        while (rs.next()) {
+            TSDBResultSetRowData rowData = new TSDBResultSetRowData(24);
+            // set TABLE_CAT
+            String db = rs.getString("db_name");
+            rowData.setStringValue(1, db);
+            // set TABLE_SCHEM
+            rowData.setStringValue(2, null);
+            // set TABLE_NAME
+            rowData.setStringValue(3, rs.getString("table_name"));
+            // set COLUMN_NAME
+            rowData.setStringValue(4, rs.getString("tag_name"));
+            // set DATA_TYPE
+            String typeName = rs.getString("tag_type");
+            int length = 0;
+            if (typeName.startsWith("VARCHAR")) {
+                rowData.setIntValue(5, DataType.getDataType("VARCHAR").getJdbcTypeValue());
+                Matcher matcher = pattern.matcher(typeName);
+                if (matcher.find()) {
+                    length = Integer.parseInt(matcher.group(1));
+                }
+                typeName = "VARCHAR";
+            } else if (typeName.startsWith("NCHAR")) {
+                rowData.setIntValue(5, DataType.getDataType("NCHAR").getJdbcTypeValue());
+                Matcher matcher = pattern.matcher(typeName);
+                if (matcher.find()) {
+                    length = Integer.parseInt(matcher.group(1));
+                }
+                typeName = "NCHAR";
+            }else {
+                rowData.setIntValue(5, DataType.getDataType(typeName).getJdbcTypeValue());
+                length = 0;
+            }
+            // set TYPE_NAME
+            rowData.setStringValue(6, typeName);
+            // set COLUMN_SIZE
+            String p = precision.get(db);
+            int size = DataType.calculateColumnSize(typeName, p, length);
+            if (size != -1) {
+                rowData.setIntValue(7, size);
+            } else {
+                rowData.setString(7, null);
+            }
+            // set BUFFER LENGTH
+            rowData.setStringValue(8, null);
+            // set DECIMAL_DIGITS
+            Integer decimalDigits = DataType.calculateDecimalDigits(typeName);
+            if (decimalDigits != null) {
+                rowData.setIntValue(9, decimalDigits);
+            } else {
+                rowData.setStringValue(9, null);
+            }
+            // set NUM_PREC_RADIX
+            rowData.setIntValue(10, 10);
+            // set NULLABLE
+            rowData.setIntValue(11, isNullable(rowIndex, typeName));
+            // set REMARKS
+            rowData.setStringValue(12, null);
+            rowDataList.add(rowData);
+            rowIndex++;
+        }
+    }
+
+    protected ResultSet getColumns(String catalog, String schemaPattern, String tableNamePattern, String columnNamePattern, Connection conn) throws SQLException {
         DatabaseMetaDataResultSet resultSet = new DatabaseMetaDataResultSet();
         // set up ColumnMetaDataList
         resultSet.setColumnMetaDataList(buildGetColumnsColumnMetaDataList());
         // set up rowDataList
         List<TSDBResultSetRowData> rowDataList = new ArrayList<>();
-        try (Statement stmt = conn.createStatement();
-             ResultSet rs = stmt.executeQuery("describe " + catalog + "." + tableNamePattern)) {
 
-            int rowIndex = 0;
-            while (rs.next()) {
-                TSDBResultSetRowData rowData = new TSDBResultSetRowData(24);
-                // set TABLE_CAT
-                rowData.setStringValue(1, catalog);
-                // set TABLE_SCHEM
-                rowData.setStringValue(2, null);
-                // set TABLE_NAME
-                rowData.setStringValue(3, tableNamePattern);
-                // set COLUMN_NAME
-                rowData.setStringValue(4, rs.getString("field"));
-                // set DATA_TYPE
-                String typeName = rs.getString("type");
-                rowData.setIntValue(5, DataType.getDataType(typeName).getJdbcTypeValue());
-                // set TYPE_NAME
-                rowData.setStringValue(6, typeName);
-                // set COLUMN_SIZE
-                int length = rs.getInt("length");
-                int size = DataType.calculateColumnSize(typeName, precision, length);
-                if (size != -1) {
-                    rowData.setIntValue(7, size);
+        if (catalog == null || catalog.equals("%")) {
+            Map<String, String> precisions = getCatalogMate(conn, null);
+            if (tableNamePattern == null || tableNamePattern.equals("%")) {
+                if (columnNamePattern == null || columnNamePattern.equals("%")) {
+                    Map<String, Set<String>> sTableMate = getSTableMate(conn, null, null);
+                    for (String db : sTableMate.keySet()) {
+                        for (String s : sTableMate.get(db)) {
+                            try (Statement stmt = conn.createStatement();
+                                 ResultSet rs = stmt.executeQuery("describe " + db + "." + s)) {
+                                show2RowData(rs, rowDataList, precisions.get(db), db, s, null);
+                            }
+                        }
+                    }
+
+                    try (Statement stmt = conn.createStatement();
+                         ResultSet rs = stmt.executeQuery(
+                                 "select table_name, db_name, table_type, col_name, col_type, col_length " +
+                                         "from information_schema.ins_columns")) {
+                        colResultSet2RowData(rs, rowDataList, precisions);
+                    }
+
+                    try (Statement stmt = conn.createStatement();
+                         ResultSet rs = stmt.executeQuery(
+                                 "select table_name, db_name, stable_name, tag_name, tag_type " +
+                                         "from information_schema.ins_tags")) {
+                        tagResultSet2RowData(rs, rowDataList, precisions);
+                    }
                 } else {
-                    rowData.setString(7, null);
+                    try (Statement stmt = conn.createStatement();
+                         ResultSet rs = stmt.executeQuery(
+                                 "select table_name, db_name, table_type, col_name, col_type, col_length " +
+                                         "from information_schema.ins_columns where col_name = '" + columnNamePattern + "'")) {
+                        colResultSet2RowData(rs, rowDataList, precisions);
+                    }
+                    // stable tag not found
+                    try (Statement stmt = conn.createStatement();
+                         ResultSet rs = stmt.executeQuery(
+                                 "select table_name, db_name, stable_name, tag_name, tag_type " +
+                                         "from information_schema.ins_tags where tag_name = '" + columnNamePattern + "'")) {
+                        tagResultSet2RowData(rs, rowDataList, precisions);
+                    }
                 }
-                // set BUFFER LENGTH
-                rowData.setStringValue(8, null);
-                // set DECIMAL_DIGITS
-                Integer decimalDigits = DataType.calculateDecimalDigits(typeName);
-                if (decimalDigits != null) {
-                    rowData.setIntValue(9, decimalDigits);
-                } else {
-                    rowData.setStringValue(9, null);
+            } else {
+                Map<String, Set<String>> sTableMate = getSTableMate(conn, tableNamePattern, null);
+                for (String db : sTableMate.keySet()) {
+                    for (String s : sTableMate.get(db)) {
+                        try (Statement stmt = conn.createStatement();
+                             ResultSet rs = stmt.executeQuery("describe " + db + "." + s)) {
+                            show2RowData(rs, rowDataList, precisions.get(db), db, s, columnNamePattern);
+                        }
+                    }
                 }
-                // set NUM_PREC_RADIX
-                rowData.setIntValue(10, 10);
-                // set NULLABLE
-                rowData.setIntValue(11, isNullable(rowIndex, typeName));
-                // set REMARKS
-                String note = rs.getString("note");
-                rowData.setStringValue(12, note.trim().isEmpty() ? null : note);
-                rowDataList.add(rowData);
-                rowIndex++;
+                Map<String, Set<String>> tableMate = getTableMate(conn, tableNamePattern, null);
+                for (Map.Entry<String, Set<String>> dbs : tableMate.entrySet()) {
+                    for (String table : dbs.getValue()) {
+                        try (Statement stmt = conn.createStatement();
+                             ResultSet rs = stmt.executeQuery("describe " + dbs.getKey() + "." + table)) {
+                            show2RowData(rs, rowDataList, precisions.get(dbs.getKey()), dbs.getKey(), table, columnNamePattern);
+                        }
+                    }
+                }
             }
-            resultSet.setRowDataList(rowDataList);
+        } else {
+            if (catalog.isEmpty())
+                return new EmptyResultSet();
+            Map<String, String> precisions = getCatalogMate(conn, catalog);
+            if (precisions.get(catalog) == null)
+                return new EmptyResultSet();
+            if (tableNamePattern == null || tableNamePattern.equals("%")) {
+                if (columnNamePattern == null || columnNamePattern.equals("%")) {
+                    Map<String, Set<String>> stableMate = getSTableMate(conn, null, catalog);
+                    for (String db : stableMate.keySet()) {
+                        for (String s : stableMate.get(db)) {
+                            try (Statement stmt = conn.createStatement();
+                                 ResultSet rs = stmt.executeQuery("describe " + catalog + "." + s)) {
+                                show2RowData(rs, rowDataList, precisions.get(catalog), catalog, s, null);
+                            }
+                        }
+                    }
+
+                    try (Statement stmt = conn.createStatement();
+                         ResultSet rs = stmt.executeQuery(
+                                 "select table_name, db_name, table_type, col_name, col_type, col_length " +
+                                         "from information_schema.ins_columns where db_name = '" + catalog + "'")) {
+                        colResultSet2RowData(rs, rowDataList, precisions);
+                    }
+
+                    try (Statement stmt = conn.createStatement();
+                         ResultSet rs = stmt.executeQuery(
+                                 "select table_name, db_name, stable_name, tag_name, tag_type " +
+                                         "from information_schema.ins_tags where db_name = '" + catalog + "'")) {
+                        tagResultSet2RowData(rs, rowDataList, precisions);
+                    }
+                } else {
+                    try (Statement stmt = conn.createStatement();
+                         ResultSet rs = stmt.executeQuery(
+                                 "select table_name, db_name, table_type, col_name, col_type, col_length " +
+                                         "from information_schema.ins_columns where col_name = '" + columnNamePattern + "' and db_name = '" + catalog + "'")) {
+                        colResultSet2RowData(rs, rowDataList, precisions);
+                    }
+
+                    // stable tag no found in result
+                    try (Statement stmt = conn.createStatement();
+                         ResultSet rs = stmt.executeQuery(
+                                 "select table_name, db_name, stable_name, tag_name, tag_type " +
+                                         "from information_schema.ins_tags where tag_name = '" + columnNamePattern + "' and db_name = '" + catalog + "'")) {
+                        tagResultSet2RowData(rs, rowDataList, precisions);
+                    }
+                }
+            } else {
+                Map<String, Set<String>> sTableMate = getSTableMate(conn, tableNamePattern, catalog);
+                for (String db : sTableMate.keySet()) {
+                    for (String s : sTableMate.get(db)) {
+                        try (Statement stmt = conn.createStatement();
+                             ResultSet rs = stmt.executeQuery("describe " + catalog + "." + s)) {
+                            show2RowData(rs, rowDataList, precisions.get(catalog), catalog, s, columnNamePattern);
+                        }
+                    }
+                }
+
+                Map<String, Set<String>> tableMate = getTableMate(conn, tableNamePattern, catalog);
+                for (Map.Entry<String, Set<String>> dbs : tableMate.entrySet()) {
+                    for (String table : dbs.getValue()) {
+                        try (Statement stmt = conn.createStatement();
+                             ResultSet rs = stmt.executeQuery("describe " + catalog + "." + table)) {
+                            show2RowData(rs, rowDataList, precisions.get(catalog), catalog, table, columnNamePattern);
+                        }
+                    }
+                }
+            }
         }
+        resultSet.setRowDataList(rowDataList);
         return resultSet;
     }
 
@@ -1260,7 +1589,6 @@ public abstract class AbstractDatabaseMetaData extends WrapperImpl implements Da
              ResultSet databases = stmt.executeQuery("select name, `precision` as `precision` from information_schema.ins_databases")) {
             while (databases.next()) {
                 String dbname = databases.getString("name");
-                this.precision = databases.getString("precision");
                 if (dbname.equalsIgnoreCase(catalog))
                     return true;
             }
